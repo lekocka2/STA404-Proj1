@@ -1,0 +1,129 @@
+---
+title: "Individual Project Written Product"
+author: "Logan Kocka"
+date: "3/30/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+library(knitr)
+library(tidyverse)
+library(plotly)
+library(lubridate)
+library(zoo)
+knitr::opts_chunk$set(echo = F)
+
+# get data 
+movies <- read.csv("Highest_Holywood_Grossing_Movies.csv")
+# CLEANING
+movies <- na.omit(movies)
+movies$Release.Date <- as.Date(movies$Release.Date,format='%B %d, %Y')
+# combine/clean distributor column
+movies <- movies %>% mutate(Distributor=ifelse((Distributor=="United Artists Releasing"),"United Artists",Distributor)) %>% 
+  mutate(Distributor=ifelse((Distributor=="DreamWorks Distribution"|Distributor=="DreamWorks Releasing"),"DreamWorks",Distributor)) %>%
+  mutate(Distributor=ifelse((Distributor=="Sony Pictures Entertainment (SPE)"|Distributor=="Sony Pictures Classics"),"Sony Pictures",Distributor)) %>%
+  mutate(Distributor=ifelse((Distributor=="Walt Disney Studios Motion Pictures"),"Walt Disney",Distributor))
+# change gross $ to millions
+movies <- movies %>%
+  mutate(Domestic.Sales.mil = Domestic.Sales..in... / 1000000) %>%
+  mutate(International.Sales.mil = International.Sales..in... / 1000000) %>%
+  mutate(World.Sales.mil = World.Sales..in... / 1000000)
+```
+
+## Plot 1 - Bar
+
+```{r, warning=FALSE}
+movies_bar <- movies %>%
+  count(License, Distributor, sort = TRUE) %>%
+  filter(n >= 10) # just keep the ones with n > 10 since there are so many
+
+arr <- movies_bar %>% count(Distributor, sort = TRUE) %>% # for ordering
+  arrange(n)
+
+cols <- c('#e69f00','deepskyblue4','#009e73','#f0e442','darkred','darkslateblue','#d55e00','#cc79a7','darkseagreen')
+
+plot_ly(movies_bar, x=~License, y=~n, color=~Distributor, colors=cols, type='bar', hoverinfo='text', 
+        text=~paste('</br> License: ', License,
+                    '</br> Distributor: ', Distributor,
+                    '</br> Count: ', n)) %>%
+  layout(yaxis = list(title = "Count"),
+         barmode = "stack", title=list(text="Distributors with 10+ of the ~1000 Highest Grossing Movies",
+                                       font=list(color='darkred')))
+```
+
+## Plot 2 - Time Series
+
+```{r, warning=FALSE}
+# floor dates and summarize counts grouped by month year and just year
+    movies_month <- movies %>%
+      mutate(MonYr = lubridate::floor_date(Release.Date, "month")) %>%
+      group_by(MonYr) %>%
+      summarize(n = n())
+    movies_yr <- movies %>%
+      mutate(Yr = lubridate::floor_date(Release.Date, "year")) %>%
+      group_by(Yr) %>%
+      summarize(n = n())
+    movies_yr$label <- sapply(strsplit(as.character(movies_yr$Yr),"-|s"), `[`, 1)
+    
+    # line time series
+    fig1 <- plot_ly(movies_month, type='scatter', mode='lines', x=~MonYr, y=~n, name='Month')
+    fig2 <- plot_ly(movies_yr, type='scatter', mode='lines', x=~Yr, y=~n, name='Year', hoverinfo='text',
+                    text=paste0("(",movies_yr$label, ", ", movies_yr$n,")"))
+    subplot(fig1, fig2, nrows=2) %>%
+      layout(plot_bgcolor='#e5ecf6', title=list(text='Time Series of Top ~1000 Highest Grossing Movie Releases',
+                                                font=list(color='#FD6200')),
+             legend=list(orientation='h', title=list(text='Dates floored by '))) %>%
+      add_annotations(text="Release Date", x=0.5, y=-0.01, yref = "paper", xref="paper", xanchor="center",
+                      yanchor="bottom", yshift=-35, showarrow=F, font=list(size=15)) %>%
+      add_annotations(text="Number of Movies Released", x=-0.07, y=0.5, xref='paper', yref='paper', font=list(size=15), 
+                      textangle=270, showarrow=F)
+```
+
+## Plot 3 - Violin/Box
+
+```{r, warning=FALSE}
+movies$Genre <- gsub("\\[|\\]", "", movies$Genre)
+    movies$Genre <- gsub("'", "", movies$Genre)
+    movies_unlist <- movies %>% separate_rows(Genre) %>%
+      mutate(Genre=ifelse((Genre=="Sci"|Genre=="Fi"),"SciFi",Genre))
+    movies_unlist <- movies_unlist[!duplicated(movies_unlist), ] # fixes a problem with the separate_rows
+    # remove some of the less frequent genres
+    movies_unlist <- movies_unlist %>%
+      filter(!Genre %in% c('Sport', 'Documentary', 'Biography', 'Western', 'History', 'Horror', 'Music','War'))
+    
+    # world
+    plot_ly(movies_unlist, y=~World.Sales.mil, color=~Genre) %>%
+      add_trace(type='violin', box = list(visible = T), meanline = list(visible = T)) %>%
+      layout(yaxis=list(title="World Lifetime Gross (Million USD)"), 
+             xaxis=list(title="Genre", tickangle=60), 
+             title=list(text="World Sales (Million USD) of Highest ~1000 Grossing Movies in Top Genres", 
+                        font=list(color='#AD7B1C')),
+             margin=list(t=60))
+```
+
+
+## Plot 4 - Bubble
+
+```{r , warning=FALSE}
+movies_diff <- movies %>%
+      mutate(Differential.mil = World.Sales.mil-Domestic.Sales.mil)
+    # differential/size will tell us whether it was mostly popular in just the US or around entire world
+    # very high difference will indicate more profits came from outside US
+    
+    plot_ly(movies_diff, x=~Domestic.Sales.mil, y=~World.Sales.mil, size=~Differential.mil, type = 'scatter', 
+            mode = 'markers', hoverinfo='text', marker=list(sizemode = 'diameter', color='#40CD31'), sizes = c(1, 50),
+            text=paste('</br><b>$ Diff:</b>', paste0('$',ceiling(movies_diff$Differential.mil),'m'), 
+                       '</br><b>Movie Title:</b>', movies_diff$Title)) %>%
+      layout(yaxis=list(title="<b>World</b> Lifetime Gross (Million USD)"), 
+             xaxis=list(title="<b>Domestic</b> Lifetime Gross (Million USD)"), 
+             title=list(text="Differences in Domestic and World Lifetime Gross 
+                        (Million USD) Highest ~1000 Grossing Movies",
+                        font=list(color='darkblue')), 
+             plot_bgcolor='#F0ECE2', margin=list(t = 75))
+```
+
+
+
+
+
+
